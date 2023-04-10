@@ -1,5 +1,6 @@
 import json, os, pandas as pd, numpy as np, csv
 
+from accelerate import accelerator
 from datasets import load_dataset, load_from_disk, Dataset, DatasetDict
 from collections import Counter
 import requests, zipfile, tarfile
@@ -9,14 +10,16 @@ from accelerate.logging import get_logger
 
 logger = get_logger(__name__)
 
+
 # SummaC Benchmark
 class SummaCBenchmark:
-    def __init__(self, benchmark_folder="./datasets/process_summary/summac_benchmark/", dataset_names=None, cut="val"):
+    def __init__(self, benchmark_folder="./datasets/process_summary/summac_benchmark/", dataset_names=None, cut="val",
+                 accelerator=None):
         self.cnndm_id2article = {}
         self.d: dict = {}  # subset to load data
         if dataset_names is None:
             dataset_names = ["cogensumm", "xsumfaith", "polytope", "factcc", "summeval", "frank"]
-        assert cut in ["val", "test"], "Unrecognized cut for the Fact Checking Benchmark"
+        assert cut in ["train", "val", "test"], "Unrecognized cut for the Fact Checking Benchmark"
         if not os.path.exists(benchmark_folder):
             os.makedirs(benchmark_folder)
         self.path = ".\\datasets\\cnn_dailymail\\"
@@ -25,7 +28,7 @@ class SummaCBenchmark:
         self.cnndm_id2reference = None
         self.cnndm = None
         self.xsum = None
-
+        self.acc = accelerator
         self.datasets = []
         for dataset_name in dataset_names:
             if dataset_name == "cogensumm":
@@ -49,7 +52,7 @@ class SummaCBenchmark:
         """train"""
         if split == "all":
             split_path = file_path + "/split_train.csv"
-            pd.read_csv(file_path+"/train.csv", nrows=500, index_col="id").to_csv(split_path)
+            pd.read_csv(file_path + "/train.csv", nrows=500, index_col="id").to_csv(split_path)
             csv_data["train"] = split_path
         """val"""
         if split in ["val", "all"]:
@@ -69,11 +72,17 @@ class SummaCBenchmark:
 
     # Underlying dataset loader: CNN/DM and XSum
     def get_cnndm_document(self, aid, split="all"):
-        if aid in self.cnndm_id2article.keys():
-            return self.cnndm_id2article[aid]
-        self.cnndm = self.load_cnndm(file_path="./datasets/cnndm_csv", split=split)
-        self.cnndm_id2article.update({d["id"]: d["article"] for d in self.cnndm[split]})
+        if self.cnndm is None:
+            self.cnndm = load_dataset("cnn_dailymail", "3.0.0", cache_dir="./datasets/cnndm/")
+            self.cnndm_id2article = {}
+            for cut in ["train", "test", "validation"]:
+                self.cnndm_id2article.update({d["id"]: d["article"] for d in self.cnndm[cut]})
         return self.cnndm_id2article[aid]
+        # if aid in self.cnndm_id2article.keys():
+        #     return self.cnndm_id2article[aid]
+        # self.cnndm = self.load_cnndm(file_path="./datasets/cnndm_csv", split=split)
+        # self.cnndm_id2article.update({d["id"]: d["article"] for d in self.cnndm[split]})
+        # return self.cnndm_id2article[aid]
 
     def get_cnndm_reference(self, aid):
         global CNNDM
@@ -256,32 +265,37 @@ class SummaCBenchmark:
         cut_dataset = [d for d in full_dataset if d["cut"] == self.cut]
         self.datasets.append({"name": "polytope", "dataset": cut_dataset})
 
-    def load_factcc(self, max_entries=-1):
+    def load_factcc(self, max_entries=1000):
         # Evaluating the Factual Consistency of Abstractive Text Summarization [https://arxiv.org/abs/1910.12840]
         # Dataset for each split must be downloaded from the Github repo: https://github.com/salesforce/factCC
-
+        for dataset in self.datasets:
+            if dataset["name"] == "factcc":
+                return
         dataset_folder = os.path.join(self.benchmark_folder, "factcc/")
-        if not os.path.exists(dataset_folder):
-            logger.info("==== FactCC dataset not found, downloading from scratch")
-            os.makedirs(dataset_folder)
-
-            urls = ["https://storage.googleapis.com/sfr-factcc-data-research/unpaired_generated_data.tar.gz",
-                    "https://storage.googleapis.com/sfr-factcc-data-research/unpaired_annotated_data.tar.gz"]
-            for url in urls:
-                zip_name = url.split("/")[-1]
-                r = requests.get(url)
-                with open(os.path.join(dataset_folder, zip_name), "wb") as f:
-                    f.write(r.content)
-
-                with tarfile.open(os.path.join(dataset_folder, zip_name), "r:gz") as f:
-                    f.extractall(dataset_folder)
-                os.remove(os.path.join(dataset_folder, zip_name))
+        if not os.path.exists(os.path.join(dataset_folder, "unpaired_annotated_data/")) \
+                or not os.path.exists(os.path.join(dataset_folder, "unpaired_generated_data/")):
+            # download data
+            if self.acc.is_main_process:
+                logger.info("==== FactCC dataset not found, downloading from scratch")
+                if not os.path.exists(dataset_folder):
+                    os.makedirs(dataset_folder)
+                urls = ["https://storage.googleapis.com/sfr-factcc-data-research/unpaired_generated_data.tar.gz",
+                        "https://storage.googleapis.com/sfr-factcc-data-research/unpaired_annotated_data.tar.gz"]
+                for url in urls:
+                    zip_name = url.split("/")[-1]
+                    r = requests.get(url)
+                    with open(os.path.join(dataset_folder, zip_name), "wb") as f:
+                        f.write(r.content)
+                    with tarfile.open(os.path.join(dataset_folder, zip_name), "r:gz") as f:
+                        f.extractall(dataset_folder)
+                    os.remove(os.path.join(dataset_folder, zip_name))
+            self.acc.wait_for_everyone()
 
         if self.cut == "train":
             dataset = []
             with open(os.path.join(dataset_folder, "unpaired_generated_data/data-original/data-train.jsonl"), "r") as f:
                 for i, line in enumerate(f):
-                    if max_entries > 0 and i >= max_entries:
+                    if 0 < max_entries <= i:
                         break
                     D = json.loads(line)
                     aid = D["filepath"].split("/")[-1].replace(".story", "")
@@ -424,14 +438,15 @@ class SummaCBenchmark:
 
     def evaluate(self, model):
         benchmark = []
-        dataset_labels = None
-        dataset_preds = model.score([d["document"] for d in dataset["dataset"]],
-                                    [d["claim"] for d in dataset["dataset"]])["scores"]
 
-        dataset_thresh, dataset_f1 = choose_best_threshold(dataset_labels, dataset_preds)
-        benchmark.append({"name": dataset["name"], "score": dataset_f1, "threshold": dataset_thresh})
+        for dataset in self.datasets:
+            l_ = -10  # int(len(dataset["dataset"]*0.9))  # 最后10%做valid
+            dataset_labels = [d["label"] for d in dataset["dataset"][l_:]]
+            dataset_preds = model.module.score([d["document"] for d in dataset["dataset"][l_:]],
+                                               [d["claim"] for d in dataset["dataset"][l_:]])["scores"]
+            dataset_thresh, dataset_f1 = choose_best_threshold(dataset_labels, dataset_preds)
+            benchmark.append({"name": dataset["name"], "score": dataset_f1, "threshold": dataset_thresh})
         return {"overall_score": np.mean([t["score"] for t in benchmark]), "benchmark": benchmark}
-
 
 if __name__ == "__main__":
     import random

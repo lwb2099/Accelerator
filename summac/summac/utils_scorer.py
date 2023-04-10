@@ -1,6 +1,10 @@
 import numpy as np
 import sklearn
 
+from accelerate.logging import get_logger
+
+
+logger = get_logger(name=__name__)
 # Choosing threshold
 def choose_best_threshold(labels, scores):
     best_f1 = 0.0

@@ -6,15 +6,11 @@ import torch
 from tqdm import tqdm
 from transformers import AutoTokenizer, AutoModelForSequenceClassification
 from utils_misc import batcher
-from accelerate.logging import get_logger
 import pandas as pd
+from accelerate.logging import get_logger
+
 
 logger = get_logger(name=__name__)
-# logging.basicConfig(
-#         format="%(asctime)s - %(levelname)s - %(name)s - %(message)s",
-#         datefmt="%m/%d/%Y %H:%M:%S",
-#         level=logging.DEBUG,
-#     )
 
 model_map = {
     "snli-base": {"model_card": "boychaboy/SNLI_roberta-base", "entailment_idx": 0, "contradiction_idx": 2},
@@ -66,7 +62,7 @@ class SummaCImager:
 
         self.granularity = granularity
         self.use_cache = use_cache
-        self.cache_folder = "/export/share/plaban/summac_cache/"
+        self.cache_folder = "./datasets/summac_cache/"
 
         self.max_doc_sents = max_doc_sents
         self.max_input_length = 256
@@ -76,9 +72,11 @@ class SummaCImager:
 
     def load_nli(self):
         self.tokenizer = AutoTokenizer.from_pretrained(self.model_card)
-        self.model = AutoModelForSequenceClassification.from_pretrained(self.model_card).eval()
-        # if self.device == "cuda":
-        #     self.model.half()
+        self.model = AutoModelForSequenceClassification.from_pretrained(self.model_card, torch_dtype=torch.float16).eval()
+        self.model.to(self.device)
+        logger.debug(f"load model on device={self.model.device}")
+        if self.device == "cuda":
+            self.model.half()
 
     def split_sentences(self, text):
         sentences = nltk.tokenize.sent_tokenize(text)
@@ -148,7 +146,7 @@ class SummaCImager:
                                                             truncation=True, max_length=self.max_input_length,
                                                             return_tensors="pt", truncation_strategy="only_first")
             with torch.no_grad():
-                model_outputs = self.model(**{k: v for k, v in batch_tokens.items()})
+                model_outputs = self.model(**{k: v.to(self.device) for k, v in batch_tokens.items()})
 
             batch_probs = torch.nn.functional.softmax(model_outputs["logits"], dim=-1)
             batch_evids = batch_probs[:, self.entailment_idx].tolist()
@@ -192,7 +190,7 @@ class SummaCImager:
                                                             truncation=True, max_length=self.max_input_length,
                                                             return_tensors="pt", truncation_strategy="only_first")
             with torch.no_grad():
-                model_outputs = self.model(**{k: v for k, v in batch_tokens.items()})
+                model_outputs = self.model(**{k: v.to(self.device) for k, v in batch_tokens.items()})
 
             batch_probs = torch.nn.functional.softmax(model_outputs["logits"], dim=-1)
             batch_evids = batch_probs[:, self.entailment_idx].tolist()
@@ -213,12 +211,20 @@ class SummaCImager:
         return images
 
     def get_cache_file(self):
-        return os.path.join(self.cache_folder, "cache_%s_%s.json" % (self.model_name, self.granularity))
+        cache_file = os.path.join(self.cache_folder, "cache_%s_%s.json" % (self.model_name, self.granularity))
+        if not os.path.exists(self.cache_folder):
+            os.makedirs(self.cache_folder)
+            # make new json file
+            if not os.path.exists(cache_file):
+                f = open(cache_file, "w")
+                f.close()
+        return cache_file
 
     def save_cache(self):
         cache_cp = {"[///]".join(k): v.tolist() for k, v in self.cache.items()}
         with open(self.get_cache_file(), "w") as f:
             json.dump(cache_cp, f)
+        f.close()
 
     def load_cache(self):
         cache_file = self.get_cache_file()
@@ -230,7 +236,7 @@ class SummaCImager:
 
 class SummaCConv(torch.nn.Module):
     def __init__(self, models=["mnli", "anli", "vitc"], bins='even50', granularity="sentence", nli_labels="e",
-                 device="cuda", start_file=None, imager_load_cache=True, agg="mean", **kwargs):
+                 device="cuda", start_file=None, imager_load_cache=False, agg="mean", acc=None, **kwargs):
         # `bins` should be `even%d` or `percentiles`
         assert nli_labels in ["e", "c", "n", "ec", "en", "cn", "ecn"], "Unrecognized nli_labels argument %s" % (
             nli_labels)
@@ -238,7 +244,7 @@ class SummaCConv(torch.nn.Module):
         super(SummaCConv, self).__init__()
         self.device = device
         self.models = models
-
+        self.acc = acc
         self.imagers = []
         for model_name in models:
             self.imagers.append(
@@ -265,15 +271,15 @@ class SummaCConv(torch.nn.Module):
 
         self.agg = agg
 
-        self.mlp = torch.nn.Linear(self.full_size, 1)
-        self.layer_final = torch.nn.Linear(3, self.n_labels)
+        self.mlp = torch.nn.Linear(self.full_size, 1).to(device)
+        self.layer_final = torch.nn.Linear(3, self.n_labels).to(device)
 
         if start_file == "default":
             start_file = "summac_conv_vitc_sent_perc_e.bin"
             if not os.path.isfile("summac_conv_vitc_sent_perc_e.bin"):
                 os.system("wget https://github.com/tingofurro/summac/raw/master/summac_conv_vitc_sent_perc_e.bin")
                 assert bins == "percentile", "bins mode should be set to percentile if using the default 1-d convolution weights."
-        if start_file is not None:
+        if start_file is not None and acc.is_main_process:
             logger.info(f"load state dict={self.load_state_dict(torch.load(start_file))}", main_process_only=True)
 
     def build_image(self, original, generated):
@@ -305,14 +311,14 @@ class SummaCConv(torch.nn.Module):
         full_histogram = np.array(full_histogram)
         return image, full_histogram
 
-    def forward(self, idx, originals, generateds, images=None):
+    def forward(self, originals, generateds, idx=None, images=None):
         logger.debug("computing histogram", main_process_only=True)
         if images is not None:
             # In case they've been pre-computed.
             histograms = []
-            bar = tqdm(enumerate(images))
+            bar = tqdm(enumerate(images), total=len(images))
             for i, image in bar:
-                bar.set_description(f"image={i}/{len(self.images)}")
+                bar.set_description(f"build image={i}/{len(self.images)}")
                 _, histogram = self.compute_histogram(image=image)
                 histograms.append(histogram)
         else:
@@ -324,30 +330,27 @@ class SummaCConv(torch.nn.Module):
 
             else:
                 images, histograms = [], []
-                bar = tqdm(enumerate(zip(originals, generateds)))
-                for i, (original, generated) in bar:
-                    bar.set_description(f"image={i}/{len(originals)}")
+                # bar = tqdm(enumerate(zip(originals, generateds)), total=len(originals))
+                for i, (original, generated) in enumerate(zip(originals, generateds)):
+                    # bar.set_description(f"build image: {i}/{len(originals)}")
                     image, histogram = self.compute_histogram(original=original, generated=generated)
-                    logger.debug(f"img_shape={image.shape}, hist_shape={histogram.shape}")
+                    # logger.debug(f"img_shape={image.shape}, hist_shape={histogram.shape}")
                     images.append(image)
                     histograms.append(histogram)
                 # save to disk, image(3,b,c)每个都不太一样, hist都一样
-                    if not os.path.exists(f"./datasets/compute_hist/images_{idx}/"):
-                        os.makedirs(f"./datasets/compute_hist/images_{idx}/")
-                    np.save(f"./datasets/compute_hist/images_{idx}/image_{i}.npy", image)
-                np.save(f"./datasets/compute_hist/histograms_{idx}.npy", histograms)
+                #     if not os.path.exists(f"./datasets/compute_hist/images_{idx}/"):
+                #         os.makedirs(f"./datasets/compute_hist/images_{idx}/")
+                #     np.save(f"./datasets/compute_hist/images_{idx}/image_{i}.npy", image)
+                # np.save(f"./datasets/compute_hist/histograms_{idx}.npy", histograms)
         N = len(histograms)
-        histograms = torch.FloatTensor(np.array(histograms))
-        histograms = histograms.cuda()
+        histograms = torch.FloatTensor(np.array(histograms)).to(self.device)
         non_zeros = (torch.sum(histograms, dim=-1) != 0.0).long()
         seq_lengths = non_zeros.sum(dim=-1).tolist()
         mlp_outs = self.mlp(histograms).reshape(N, self.n_rows)
         # mlp_outs.cuda()
-        logger.debug(f"mlp_device: {mlp_outs.device}")
         features = []
-        pbar = tqdm(zip(mlp_outs, seq_lengths))
-        for i, (mlp_out, seq_length) in enumerate(pbar):
-            pbar.set_description(f"agg: {i}/{N}")
+        # pbar = tqdm(enumerate(zip(mlp_outs, seq_lengths)), total=len(mlp_outs), desc="agg:")
+        for i, (mlp_out, seq_length) in enumerate(zip(mlp_outs, seq_lengths)):
             if seq_length > 0:
                 Rs = mlp_out[:seq_length]
                 if self.agg == "mean":
