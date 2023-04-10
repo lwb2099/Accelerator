@@ -121,7 +121,9 @@ def train(model="mnli", granularity="sentence", nli_labels="e", pre_file="", num
         models = [model]
     """build model"""
     model = SummaCConv(models=models, granularity=granularity, nli_labels=nli_labels,
-                       device=device, bins=bins, norm_histo=norm_histo, save=save, acc=accelerator)
+                       device=device, bins=bins, norm_histo=norm_histo,
+                       start_file="/home/liwenbo/summac/summac/summac/vitc_sentence_percentile_e_bacc0.700.bin",
+                       save=save, acc=accelerator)
     optimizer = build_optimizer(model, learning_rate=learning_rate, optimizer_name=optimizer)
     if not silent:
         logger.info("Model Loaded", main_process_only=True)
@@ -137,7 +139,7 @@ def train(model="mnli", granularity="sentence", nli_labels="e", pre_file="", num
     optimizer: Optimizer
     logger.debug(f"device_info: model on {model.device}, dl_train on {dl_train.device}")
     if not silent:
-        logger.info("Length of dataset. [Training: %d]" % (len(d_train)), main_process_only=True)
+        logger.info("Length of dataset. [Train: %d] [Valid: %d]" % (len(d_train), len(d_val)), main_process_only=True)
     criterion = torch.nn.CrossEntropyLoss()
     eval_interval = 8  # every _ batch in one epoch
     best_val_score = 0.0
@@ -169,8 +171,6 @@ def train(model="mnli", granularity="sentence", nli_labels="e", pre_file="", num
                 eval_time = time.time() - eval_time
                 if eval_time > 10.0:
                     model.module.save_imager_cache()
-                if not silent:
-                    itr.set_description("[Benchmark Score: %.3f]" % val_score)
                 if val_score > best_val_score:
                     best_val_score = val_score
                     # only main process handles files
@@ -182,11 +182,11 @@ def train(model="mnli", granularity="sentence", nli_labels="e", pre_file="", num
                     accelerator.wait_for_everyone()
                     unwrapped_model = accelerator.unwrap_model(model)
                     accelerator.save(unwrapped_model.state_dict(), best_file)
-                    if not silent:
-                        for t in benchmark["benchmark"]:
-                            logger.info(
-                                "[%s] Score: %.3f (thresh: %.3f)" % (t["name"].ljust(10), t["score"], t["threshold"]),
-                                main_process_only=True)
+                if not silent:
+                    for t in benchmark["benchmark"]:
+                        logger.info(
+                            "[%s] Score: %.3f (thresh: %.3f)" % (t["name"].ljust(10), t["score"], t["threshold"]),
+                            main_process_only=True)
     return best_val_score
 
 
