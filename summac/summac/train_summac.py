@@ -94,23 +94,24 @@ def train(model="mnli", granularity="sentence", nli_labels="e", pre_file="", num
 
     """load dataset"""
     # fastcc
-    # save = False
-    # fcb = SummaCBenchmark(cut="train", dataset_names=['factcc'], accelerator=accelerator)
-    # d_train: List[dict] = fcb.get_dataset(dataset_name='factcc')
-    # dl_train = DataLoader(dataset=d_train, batch_size=train_batch_size, pin_memory=True,
-    #                       sampler=RandomSampler(d_train), num_workers=3,
-    #                       collate_fn=collate_func)
+    save = False
+    fcb = SummaCBenchmark(cut="train", dataset_names=['factcc'], accelerator=accelerator)
+    d_train: List[dict] = fcb.get_dataset(dataset_name='factcc')
+    dl_train = DataLoader(dataset=d_train, batch_size=train_batch_size, pin_memory=True,
+                          sampler=RandomSampler(d_train), num_workers=3,
+                          collate_fn=collate_func)
+    fcb = SummaCBenchmark(cut="val", dataset_names=['factcc'], accelerator=accelerator)
+
 
     # cogensum
-    save = False  # True
-    fcb = SummaCBenchmark(cut="val", dataset_names=['cogensumm'])
-    dataset: List[dict] = fcb.get_dataset(dataset_name='cogensumm')
-    d_train = dataset[:int(len(dataset) * 0.9)]
-    d_val = dataset[int(len(dataset) * 0.9):]
-    # 最后10%是val set
-    dl_train = DataLoader(dataset=d_train, shuffle=False,
-                          batch_size=train_batch_size, collate_fn=collate_func)
-    dl_val = collate_func(d_val)
+    # save = False  # True
+    # fcb = SummaCBenchmark(cut="val", dataset_names=['cogensumm'])
+    # dataset: List[dict] = fcb.get_dataset(dataset_name='cogensumm')
+    # d_train = dataset[:int(len(dataset) * 0.9)]
+    # d_val = dataset[int(len(dataset) * 0.9):]
+    # # 最后10%是val set
+    # dl_train = DataLoader(dataset=d_train, shuffle=False,
+    #                       batch_size=train_batch_size, collate_fn=collate_func)
 
     device = "cuda"  # "cpu" if precomputed else "cuda"
     if model == "multi":
@@ -139,7 +140,7 @@ def train(model="mnli", granularity="sentence", nli_labels="e", pre_file="", num
     optimizer: Optimizer
     logger.debug(f"device_info: model on {model.device}, dl_train on {dl_train.device}")
     if not silent:
-        logger.info("Length of dataset. [Train: %d] [Valid: %d]" % (len(d_train), len(d_val)), main_process_only=True)
+        logger.info("Length of dataset. [Train: %d]" % (len(d_train)), main_process_only=True)
     criterion = torch.nn.CrossEntropyLoss()
     eval_interval = 8  # every _ batch in one epoch
     best_val_score = 0.0
@@ -192,6 +193,6 @@ def train(model="mnli", granularity="sentence", nli_labels="e", pre_file="", num
 
 if __name__ == "__main__":
     """
-    accelerate launch --main_process_port 29508 --config_file /home/liwenbo/summac/summac_config.yaml train_summac.py --model vitc --granularity sentence --train_batch_size 16 --num_epochs 10 --nli_labels e 
+    accelerate launch --main_process_port 29508 --config_file /home/liwenbo/summac/summac_config.yaml train_summac.py --model vitc --granularity sentence --train_batch_size 8 --num_epochs 10 --nli_labels e 
     """
     main()

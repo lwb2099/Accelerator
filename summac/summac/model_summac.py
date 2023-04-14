@@ -68,7 +68,7 @@ class SummaCImager:
         self.max_input_length = 256
         self.device = device
         self.cache = {}
-        self.model = None  # Lazy loader
+        self.load_nli()
 
     def load_nli(self):
         self.tokenizer = AutoTokenizer.from_pretrained(self.model_card)
@@ -136,8 +136,8 @@ class SummaCImager:
 
         image = np.zeros((3, N_ori, N_gen))
 
-        if self.model is None:
-            self.load_nli()
+        # if self.model is None:
+        #     self.load_nli()
 
         for batch in batcher(dataset, batch_size=20):
             batch_prems = [b["premise"] for b in batch]
@@ -180,8 +180,8 @@ class SummaCImager:
                 image = np.zeros((3, N_ori, N_gen))
             todo_images.append(image)
             total_dataset += dataset
-        if len(total_dataset) > 0 and self.model is None:  # Can't just rely on the cache
-            self.load_nli()
+        # if len(total_dataset) > 0 and self.model is None:  # Can't just rely on the cache
+        #     self.load_nli()
 
         for batch in batcher(total_dataset, batch_size=batch_size):
             batch_prems = [b["premise"] for b in batch]
@@ -347,7 +347,7 @@ class SummaCConv(torch.nn.Module):
         non_zeros = (torch.sum(histograms, dim=-1) != 0.0).long()
         seq_lengths = non_zeros.sum(dim=-1).tolist()
         mlp_outs = self.mlp(histograms).reshape(N, self.n_rows)
-        # mlp_outs.cuda()
+        # mlp_outs.to(self.device)
         features = []
         # pbar = tqdm(enumerate(zip(mlp_outs, seq_lengths)), total=len(mlp_outs), desc="agg:")
         for i, (mlp_out, seq_length) in enumerate(zip(mlp_outs, seq_lengths)):

@@ -1,7 +1,6 @@
 import json, os, pandas as pd, numpy as np, csv
 
-from accelerate import accelerator
-from datasets import load_dataset, load_from_disk, Dataset, DatasetDict
+from datasets import load_dataset, load_from_disk, DatasetDict
 from collections import Counter
 import requests, zipfile, tarfile
 from utils_scorer import choose_best_threshold
@@ -38,7 +37,7 @@ class SummaCBenchmark:
             elif dataset_name == "polytope":
                 self.load_polytope()
             elif dataset_name == "factcc":
-                self.load_factcc()
+                self.load_factcc(max_entries=100000)
             elif dataset_name == "summeval":
                 self.load_summeval()
             elif dataset_name == "frank":
@@ -265,7 +264,7 @@ class SummaCBenchmark:
         cut_dataset = [d for d in full_dataset if d["cut"] == self.cut]
         self.datasets.append({"name": "polytope", "dataset": cut_dataset})
 
-    def load_factcc(self, max_entries=1000):
+    def load_factcc(self, max_entries=-1):
         # Evaluating the Factual Consistency of Abstractive Text Summarization [https://arxiv.org/abs/1910.12840]
         # Dataset for each split must be downloaded from the Github repo: https://github.com/salesforce/factCC
         for dataset in self.datasets:
@@ -440,7 +439,11 @@ class SummaCBenchmark:
         benchmark = []
 
         for dataset in self.datasets:
-            l_ = -10  # int(len(dataset["dataset"]*0.9))  # 最后10%做valid
+            if dataset['name'] == 'cogensum':
+                l_ = -10  # int(len(dataset["dataset"]*0.9))  # 最后10%做valid
+            else:
+                l_ = 0  # factcc: 用val集
+            logger.info(f"evaluate on val set [Valid: {len(dataset['dataset'][l_:])}]")
             dataset_labels = [d["label"] for d in dataset["dataset"][l_:]]
             dataset_preds = model.module.score([d["document"] for d in dataset["dataset"][l_:]],
                                                [d["claim"] for d in dataset["dataset"][l_:]])["scores"]
