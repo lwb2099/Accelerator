@@ -3,8 +3,10 @@
 1. multi-GPU-training-with-accelerator/summac/nltk_data/
 1. multi-GPU-training-with-accelerator/summac/summac/*.bin
 1. multi-GPU-training-with-accelerator/summac/*.bin
+1. multi-GPU-training-with-accelerator/summary-correctness-v1.0.zip
 **/__pycache__
 
 
 2. pre-train-with-bart-text-infilling/datasets/*
 2. pre-train-with-bart-text-infilling/models/*
+
