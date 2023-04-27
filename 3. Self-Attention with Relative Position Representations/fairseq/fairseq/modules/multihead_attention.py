@@ -25,6 +25,7 @@ from fairseq.modules.quant_noise import quant_noise
 from fairseq.models.fairseq_incremental_decoder import FairseqIncrementalDecoder
 from .relative_positional_embedding import RelativePositionalEmbedding
 
+
 # TODO: move this into xformers?
 # TODO: uint8 input type should just output a bool
 def _mask_for_xformers(mask: Tensor, to_dtype: Optional[torch.dtype] = None):
@@ -194,33 +195,15 @@ class MultiheadAttention(FairseqIncrementalDecoder):
             start_idx = i * self.head_dim
             end_idx = (i + 1) * self.head_dim
             k_proj_heads_norm.append(
-                torch.sum(
-                    torch.abs(
-                        self.k_proj.weight[
-                            start_idx:end_idx,
-                        ]
-                    )
-                ).tolist()
+                torch.sum(torch.abs(self.k_proj.weight[start_idx:end_idx,])).tolist()
                 + torch.sum(torch.abs(self.k_proj.bias[start_idx:end_idx])).tolist()
             )
             q_proj_heads_norm.append(
-                torch.sum(
-                    torch.abs(
-                        self.q_proj.weight[
-                            start_idx:end_idx,
-                        ]
-                    )
-                ).tolist()
+                torch.sum(torch.abs(self.q_proj.weight[start_idx:end_idx,])).tolist()
                 + torch.sum(torch.abs(self.q_proj.bias[start_idx:end_idx])).tolist()
             )
             v_proj_heads_norm.append(
-                torch.sum(
-                    torch.abs(
-                        self.v_proj.weight[
-                            start_idx:end_idx,
-                        ]
-                    )
-                ).tolist()
+                torch.sum(torch.abs(self.v_proj.weight[start_idx:end_idx,])).tolist()
                 + torch.sum(torch.abs(self.v_proj.bias[start_idx:end_idx])).tolist()
             )
 
@@ -251,26 +234,14 @@ class MultiheadAttention(FairseqIncrementalDecoder):
 
         for ele in reserve_head_index:
             start_idx, end_idx = ele
-            new_q_weight.append(
-                self.q_proj.weight[
-                    start_idx:end_idx,
-                ]
-            )
+            new_q_weight.append(self.q_proj.weight[start_idx:end_idx,])
             new_q_bias.append(self.q_proj.bias[start_idx:end_idx])
 
-            new_k_weight.append(
-                self.k_proj.weight[
-                    start_idx:end_idx,
-                ]
-            )
+            new_k_weight.append(self.k_proj.weight[start_idx:end_idx,])
 
             new_k_bias.append(self.k_proj.bias[start_idx:end_idx])
 
-            new_v_weight.append(
-                self.v_proj.weight[
-                    start_idx:end_idx,
-                ]
-            )
+            new_v_weight.append(self.v_proj.weight[start_idx:end_idx,])
             new_v_bias.append(self.v_proj.bias[start_idx:end_idx])
 
             new_out_proj_weight.append(self.out_proj.weight[:, start_idx:end_idx])
@@ -377,7 +348,6 @@ class MultiheadAttention(FairseqIncrementalDecoder):
         need_weights: bool = True,
         attn_mask: Optional[Tensor] = None,
     ) -> Tuple[Tensor, Optional[Tensor]]:
-
         tgt_len, bsz, embed_dim = query.size()
 
         if key_padding_mask is not None:
@@ -466,7 +436,9 @@ class MultiheadAttention(FairseqIncrementalDecoder):
         # TODO: support returning attention weights if needed.
         return y, None
 
-    def _relative_position_multi_head_forward(self, q, k, v, key_padding_mask, attn_mask, max_relative_position=4):
+    def _relative_position_multi_head_forward(
+        self, q, k, v, key_padding_mask, attn_mask, max_relative_position=4
+    ):
         r"""
         @lwb:
                 Relative position multi-head forward
@@ -484,80 +456,102 @@ class MultiheadAttention(FairseqIncrementalDecoder):
         """
         tgt_len, batch_size, d_model = q.shape
         src_len, _, _ = k.shape
-        relative_position_k = RelativePositionalEmbedding(embedding_dim= self.head_dim, max_relative_position=max_relative_position).to(q.device)
-        relative_position_v = RelativePositionalEmbedding(embedding_dim=self.head_dim, max_relative_position=max_relative_position).to(q.device)
+        relative_position_k = RelativePositionalEmbedding(
+            embedding_dim=self.head_dim, max_relative_position=max_relative_position
+        ).to(q.device)
+        relative_position_v = RelativePositionalEmbedding(
+            embedding_dim=self.head_dim, max_relative_position=max_relative_position
+        ).to(q.device)
         "cal O, K, V"
-        #* Q: [tgt_len, batch_size, d_model]
+        # * Q: [tgt_len, batch_size, d_model]
         Q = self.q_proj(q)
-        #* K: [src_len, batch_size, d_model]
+        # * K: [src_len, batch_size, d_model]
         K = self.k_proj(k)
-        #* V: [src_len, batch_size, d_model]
+        # * V: [src_len, batch_size, d_model]
         V = self.v_proj(v)
-        #* r_q: [batch, n_head, tgt_len, head_dim]
+        # * r_q: [batch, n_head, tgt_len, head_dim]
         "orig multi head attn"
-        r_q = Q.view(-1, batch_size, self.num_heads, self.head_dim).permute(1,2,0,3)
-        #* r_k: [batch, n_head, src_len, head_dim]
-        r_k = K.view(-1, batch_size, self.num_heads, self.head_dim).permute(1,2,0,3)
-        #* r_v: [batch, n_head, src_len, head_dim]
-        r_v = V.view(-1, batch_size, self.num_heads, self.head_dim).permute(1,2,0,3)
-        #* attn_orig: [batch, n_head, tgt_len, src_len]
-        attn_weight_orig = torch.matmul(r_q, r_k.permute(0,1,3,2))
+        r_q = Q.view(-1, batch_size, self.num_heads, self.head_dim).permute(1, 2, 0, 3)
+        # * r_k: [batch, n_head, src_len, head_dim]
+        r_k = K.view(-1, batch_size, self.num_heads, self.head_dim).permute(1, 2, 0, 3)
+        # * r_v: [batch, n_head, src_len, head_dim]
+        r_v = V.view(-1, batch_size, self.num_heads, self.head_dim).permute(1, 2, 0, 3)
+        # * attn_orig: [batch, n_head, tgt_len, src_len]
+        attn_weight_orig = torch.matmul(r_q, r_k.permute(0, 1, 3, 2))
         "relative position attn"
-        #* r_q_pos: [tgt_len, n_head*batch, head_dim]
-        r_q_pos = Q.view(tgt_len, batch_size*self.num_heads, self.head_dim)
-        #* r_k_pos: [tgt_len, src_len, head_dim]
+        # * r_q_pos: [tgt_len, n_head*batch, head_dim]
+        r_q_pos = Q.view(tgt_len, batch_size * self.num_heads, self.head_dim)
+        # * r_k_pos: [tgt_len, src_len, head_dim]
         r_k_pos = relative_position_k(tgt_len, src_len)
-        #* r_v_pos: [tgt_len, src_len, head_dim]
+        # * r_v_pos: [tgt_len, src_len, head_dim]
         r_v_pos = relative_position_v(tgt_len, src_len)
-        #* attn_pos: [tgt_len, n_head*batch, src_len] -> [batch_size, n_head, tgt_len, src_len]
-        attn_weight_pos = torch.matmul(r_q_pos, r_k_pos.swapaxes(1,2))
-        attn_weight_pos = attn_weight_pos.swapaxes(0,1).contiguous().view(batch_size, self.num_heads, tgt_len, src_len)
+        # * attn_pos: [tgt_len, n_head*batch, src_len] -> [batch_size, n_head, tgt_len, src_len]
+        attn_weight_pos = torch.matmul(r_q_pos, r_k_pos.swapaxes(1, 2))
+        attn_weight_pos = (
+            attn_weight_pos.swapaxes(0, 1)
+            .contiguous()
+            .view(batch_size, self.num_heads, tgt_len, src_len)
+        )
         "combine orig and relative_position"
-        #* [batch, n_head, tgt_len, src_len]
+        # * [batch, n_head, tgt_len, src_len]
         attn_weight_raw = (attn_weight_orig + attn_weight_pos) / self.scaling
         "mask"
         mask = None
-        #* padding mask: [batch_size, src_len] -> [batch_size, tgt_len, src_len]
+        # * padding mask: [batch_size, src_len] -> [batch_size, tgt_len, src_len]
         if key_padding_mask is not None:
-            key_padding_mask = key_padding_mask.unsqueeze(1).expand(batch_size, tgt_len, src_len)
+            key_padding_mask = key_padding_mask.unsqueeze(1).expand(
+                batch_size, tgt_len, src_len
+            )
         else:
-            key_padding_mask = torch.zeros((batch_size, tgt_len, src_len), dtype=torch.bool, device=q.device)
+            key_padding_mask = torch.zeros(
+                (batch_size, tgt_len, src_len), dtype=torch.bool, device=q.device
+            )
         if attn_mask is not None:
-            #* [tgt_len, src_len] -> [batch_size, tgt_len, src_len]
+            # * [tgt_len, src_len] -> [batch_size, tgt_len, src_len]
             attn_mask = attn_mask.unsqueeze(0).repeat(batch_size, 1, 1)
         else:
-            attn_mask = torch.zeros((batch_size, tgt_len, src_len), dtype=torch.bool, device=q.device)
-        
-        mask = torch.gt((key_padding_mask + attn_mask), 0)           
-            
-        #* [batch, tgt_len, src_len] -> [batch_size, n_heads, tgt_len, src_len]
-        mask = mask.unsqueeze(1).repeat(1,self.num_heads, 1, 1)
+            attn_mask = torch.zeros(
+                (batch_size, tgt_len, src_len), dtype=torch.bool, device=q.device
+            )
+
+        mask = torch.gt((key_padding_mask + attn_mask), 0)
+
+        # * [batch, tgt_len, src_len] -> [batch_size, n_heads, tgt_len, src_len]
+        mask = mask.unsqueeze(1).repeat(1, self.num_heads, 1, 1)
         "cal attn weight"
         attn_weight_fill = attn_weight_raw.masked_fill(mask, -1e10)
-        #* attn_weight: [batch, n_head, tgt_len, src_len]
+        # * attn_weight: [batch, n_head, tgt_len, src_len]
         attn_weight = self.dropout_module(torch.softmax(attn_weight_fill, dim=-1))
         "cal attn value"
-        #* [batch_size, n_heads, tgt_len, head_dim]
+        # * [batch_size, n_heads, tgt_len, head_dim]
         attn_value_orig = torch.matmul(attn_weight, r_v)
-        #* [batch, n_head, tgt_len, src_len] -> [tgt_len,n_heads*batch, src_len]
-        attn_weight_fill_pos = attn_weight.view(batch_size*self.num_heads, tgt_len, src_len).permute(1,0,2)
-        #* [tgt_len, n_heads*batch_size, head_dim]
+        # * [batch, n_head, tgt_len, src_len] -> [tgt_len,n_heads*batch, src_len]
+        attn_weight_fill_pos = attn_weight.view(
+            batch_size * self.num_heads, tgt_len, src_len
+        ).permute(1, 0, 2)
+        # * [tgt_len, n_heads*batch_size, head_dim]
         attn_value_pos = torch.matmul(attn_weight_fill_pos, r_v_pos)
-        #* [batch, n_heads, tgt_len, head_dim]
-        attn_value_pos = attn_value_pos.permute(1,0,2).view(batch_size,self.num_heads, tgt_len, self.head_dim)
+        # * [batch, n_heads, tgt_len, head_dim]
+        attn_value_pos = attn_value_pos.permute(1, 0, 2).view(
+            batch_size, self.num_heads, tgt_len, self.head_dim
+        )
         attn_value = attn_value_orig + attn_value_pos
-        #* [batch, n_heads, tgt_len, head_dim] -> [batch, tgt_len, d_model]
-        attn_value = attn_value.permute(0,2,1,3).contiguous().view(batch_size, tgt_len, self.embed_dim)
-        #* [batch, tgt_len, d_model] -> [tgt_len, batch, d_model]
-        attn_value = self.out_proj(attn_value).swapaxes(0,1)
-        #* return avg weight cross heads
-        #* [batch, n_head, tgt_len, src_len] -> [batch, tgt_len, src_len]
+        # * [batch, n_heads, tgt_len, head_dim] -> [batch, tgt_len, d_model]
+        attn_value = (
+            attn_value.permute(0, 2, 1, 3)
+            .contiguous()
+            .view(batch_size, tgt_len, self.embed_dim)
+        )
+        # * [batch, tgt_len, d_model] -> [tgt_len, batch, d_model]
+        attn_value = self.out_proj(attn_value).swapaxes(0, 1)
+        # * return avg weight cross heads
+        # * [batch, n_head, tgt_len, src_len] -> [batch, tgt_len, src_len]
         attn_weight = attn_weight.mean(dim=1)
         return attn_value, attn_weight
-    
+
     def forward(
         self,
-        #*[length, batch_size, d_model] = [21,192,512]
+        # *[length, batch_size, d_model] = [21,192,512]
         query: Tensor,
         key: Optional[Tensor],
         value: Optional[Tensor],
@@ -592,7 +586,7 @@ class MultiheadAttention(FairseqIncrementalDecoder):
             need_weights = True
 
         is_tpu = query.device.type == "xla"
-        
+
         tgt_len, bsz, embed_dim = query.size()
         src_len = tgt_len
         if not self.skip_embed_dim_check:
@@ -625,10 +619,17 @@ class MultiheadAttention(FairseqIncrementalDecoder):
             if self.use_xformers:
                 return self._xformers_attn_forward(
                     query, key, value, key_padding_mask, need_weights, attn_mask
-                )  
+                )
             elif use_relative_attn:
                 "@lwb: use relative positional embedding"
-                return self._relative_position_multi_head_forward(query, key, value, key_padding_mask, attn_mask, max_relative_position=max_relative_position)
+                return self._relative_position_multi_head_forward(
+                    query,
+                    key,
+                    value,
+                    key_padding_mask,
+                    attn_mask,
+                    max_relative_position=max_relative_position,
+                )
             else:
                 # val: [tgt_len, batch,d_model] = [21,192,512]
                 # weight: [batch, tgt_len, src_len] = [192,21,21]

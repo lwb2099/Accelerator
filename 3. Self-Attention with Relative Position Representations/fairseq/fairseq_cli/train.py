@@ -40,6 +40,7 @@ from fairseq.logging import meters, metrics, progress_bar
 from fairseq.model_parallel.megatron_trainer import MegatronTrainer
 from fairseq.trainer import Trainer
 import os
+
 # os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
 
@@ -92,6 +93,7 @@ def main(cfg: FairseqConfig) -> None:
     assert cfg.criterion, "Please specify criterion to train a model"
 
     # Build model and criterion
+
     if cfg.distributed_training.ddp_backend == "fully_sharded":
         with fsdp_enable_wrap(cfg.distributed_training):
             model = fsdp_wrap(task.build_model(cfg.model))
@@ -320,7 +322,6 @@ def train(
         ),
     )
     progress.update_config(_flatten_config(cfg))
-
     trainer.begin_epoch(epoch_itr.epoch)
 
     valid_subsets = cfg.dataset.valid_subset.split(",")
@@ -385,7 +386,6 @@ def validate_and_save(
 ) -> Tuple[List[Optional[float]], bool]:
     num_updates = trainer.get_num_updates()
     max_update = cfg.optimization.max_update or math.inf
-
     # Stopping conditions (and an additional one based on validation loss later
     # on)
     should_stop = False

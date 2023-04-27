@@ -26,22 +26,6 @@ logger = logging.getLogger(__name__)
 
 
 class TransformerModelBase(FairseqEncoderDecoderModel):
-    """
-    Transformer model from `"Attention Is All You Need" (Vaswani, et al, 2017)
-    <https://arxiv.org/abs/1706.03762>`_.
-
-    Args:
-        encoder (TransformerEncoder): the encoder
-        decoder (TransformerDecoder): the decoder
-
-    The Transformer model provides the following named architectures and
-    command-line arguments:
-
-    .. argparse::
-        :ref: fairseq.models.transformer_parser
-        :prog:
-    """
-
     def __init__(self, cfg, encoder, decoder):
         super().__init__(encoder, decoder)
         self.cfg = cfg
@@ -160,8 +144,10 @@ class TransformerModelBase(FairseqEncoderDecoderModel):
         """
         logger.debug("step into forward pass")
         encoder_out = self.encoder(
-            src_tokens, src_lengths=src_lengths, return_all_hiddens=return_all_hiddens, 
-            use_relative_attn=self.cfg.use_relative_attn
+            src_tokens,
+            src_lengths=src_lengths,
+            return_all_hiddens=return_all_hiddens,
+            use_relative_attn=self.cfg.use_relative_attn,
         )
         decoder_out = self.decoder(
             prev_output_tokens,
@@ -171,7 +157,7 @@ class TransformerModelBase(FairseqEncoderDecoderModel):
             alignment_heads=alignment_heads,
             src_lengths=src_lengths,
             return_all_hiddens=return_all_hiddens,
-            use_relative_attn = self.cfg.use_relative_attn
+            use_relative_attn=self.cfg.use_relative_attn,
         )
         return decoder_out
 

@@ -76,6 +76,7 @@ class TransformerEncoderBase(FairseqEncoder):
             if not cfg.no_token_positional_embeddings
             else None
         )
+
         if cfg.layernorm_embedding:
             self.layernorm_embedding = LayerNorm(embed_dim, export=cfg.export)
         else:
@@ -167,8 +168,11 @@ class TransformerEncoderBase(FairseqEncoder):
         """
         return self.forward_scriptable(
             # @lwb: add relative attn args
-            src_tokens, src_lengths, return_all_hiddens, token_embeddings, 
-            use_relative_attn=use_relative_attn
+            src_tokens,
+            src_lengths,
+            return_all_hiddens,
+            token_embeddings,
+            use_relative_attn=use_relative_attn,
         )
 
     # TorchScript doesn't support super() method so that the scriptable Subclass
@@ -182,7 +186,7 @@ class TransformerEncoderBase(FairseqEncoder):
         return_all_hiddens: bool = False,
         token_embeddings: Optional[torch.Tensor] = None,
         # @lwb: add relative attn args
-        use_relative_attn: bool = False
+        use_relative_attn: bool = False,
     ):
         """
         Args:
@@ -235,9 +239,10 @@ class TransformerEncoderBase(FairseqEncoder):
         # encoder layers
         for layer in self.layers:
             lr = layer(
-                x, encoder_padding_mask=encoder_padding_mask if has_pads else None,
+                x,
+                encoder_padding_mask=encoder_padding_mask if has_pads else None,
                 # @lwb: add relative attn args
-                use_relative_attn = use_relative_attn
+                use_relative_attn=use_relative_attn,
             )
 
             if isinstance(lr, tuple) and len(lr) == 2:
