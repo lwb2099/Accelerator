@@ -1,12 +1,32 @@
+# pycharm&IDE
 .idea
+
+**/__pycache__
+
+#data
+
+# checkpoints
+checkpoints
+*.pt
+.github
 1. multi-GPU-training-with-accelerator/summac/summac/datasets/*
 1. multi-GPU-training-with-accelerator/summac/nltk_data/
 1. multi-GPU-training-with-accelerator/summac/summac/*.bin
 1. multi-GPU-training-with-accelerator/summac/*.bin
 1. multi-GPU-training-with-accelerator/summary-correctness-v1.0.zip
-**/__pycache__
+
 
 
 2. pre-train-with-bart-text-infilling/datasets/*
 2. pre-train-with-bart-text-infilling/models/*
+
+# Checkpoints
+3. Self-Attention with Relative Position Representations/checkpoints
+# 3. Self-Attention with Relative Position Representations
+# data
+data-bin/
+*.de-en
+orig
+mosesdecoder
+subword-nmt
 
