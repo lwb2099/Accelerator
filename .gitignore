@@ -9,12 +9,11 @@
 checkpoints
 *.pt
 .github
-1. multi-GPU-training-with-accelerator/summac/summac/datasets/*
+1. multi-GPU-training-with-accelerator/datasets
 1. multi-GPU-training-with-accelerator/summac/nltk_data/
-1. multi-GPU-training-with-accelerator/summac/summac/*.bin
+1. multi-GPU-training-with-accelerator/*.bin
 1. multi-GPU-training-with-accelerator/summac/*.bin
 1. multi-GPU-training-with-accelerator/summary-correctness-v1.0.zip
-
 
 
 2. pre-train-with-bart-text-infilling/datasets/*

@@ -6,13 +6,12 @@ import requests, zipfile, tarfile
 from utils_scorer import choose_best_threshold
 from utils_misc import download_file_from_google_drive
 from accelerate.logging import get_logger
-
 logger = get_logger(__name__)
 
 
 # SummaC Benchmark
 class SummaCBenchmark:
-    def __init__(self, benchmark_folder="./datasets/process_summary/summac_benchmark/", dataset_names=None, cut="val",
+    def __init__(self, benchmark_folder="1. multi-GPU-training-with-accelerator/datasets/process_summary/summac_benchmark/", dataset_names=None, cut="val",
                  accelerator=None):
         self.cnndm_id2article = {}
         self.d: dict = {}  # subset to load data
@@ -21,7 +20,7 @@ class SummaCBenchmark:
         assert cut in ["train", "val", "test"], "Unrecognized cut for the Fact Checking Benchmark"
         if not os.path.exists(benchmark_folder):
             os.makedirs(benchmark_folder)
-        self.path = ".\\datasets\\cnn_dailymail\\"
+        self.path = "1. multi-GPU-training-with-accelerator/datasets"
         self.cut = cut
         self.benchmark_folder = benchmark_folder
         self.cnndm_id2reference = None
@@ -72,7 +71,7 @@ class SummaCBenchmark:
     # Underlying dataset loader: CNN/DM and XSum
     def get_cnndm_document(self, aid, split="all"):
         if self.cnndm is None:
-            self.cnndm = load_dataset("cnn_dailymail", "3.0.0", cache_dir="./datasets/cnndm/")
+            self.cnndm = load_dataset("cnn_dailymail", "3.0.0", cache_dir=f"{self.path}/cnndm/")
             self.cnndm_id2article = {}
             for cut in ["train", "test", "validation"]:
                 self.cnndm_id2article.update({d["id"]: d["article"] for d in self.cnndm[cut]})
@@ -447,6 +446,8 @@ class SummaCBenchmark:
             dataset_labels = [d["label"] for d in dataset["dataset"][l_:]]
             dataset_preds = model.module.score([d["document"] for d in dataset["dataset"][l_:]],
                                                [d["claim"] for d in dataset["dataset"][l_:]])["scores"]
+            dataset_labels, dataset_preds = self.acc.gather_for_matrices(dataset_labels, dataset_preds)
+    
             dataset_thresh, dataset_f1 = choose_best_threshold(dataset_labels, dataset_preds)
             benchmark.append({"name": dataset["name"], "score": dataset_f1, "threshold": dataset_thresh})
         return {"overall_score": np.mean([t["score"] for t in benchmark]), "benchmark": benchmark}
