@@ -37,6 +37,7 @@ from itertools import chain
 from pathlib import Path
 
 import datasets
+import numpy as np
 import torch
 from accelerate import Accelerator, DistributedType
 from accelerate.logging import get_logger
@@ -62,6 +63,7 @@ from transformers import (
 from transformers.utils import check_min_version, get_full_repo_name, send_example_telemetry
 from transformers.utils.versions import require_version
 import os
+import wandb
 
 # Will error if the minimal version of Transformers is not installed. Remove at your own risks.
 # check_min_version("4.30.0.dev0")
@@ -101,6 +103,12 @@ def parse_args():
         "--max_eval_data",
         type=int,
         default=1000,
+    )
+    parser.add_argument(
+        "--log_interval",
+        type=int,
+        default=100,
+        help="Log every X updates steps.",
     )
     parser.add_argument(
         "--train_file", type=str, default=None, help="A csv or a json file containing the training data."
@@ -630,7 +638,15 @@ def main():
         experiment_config = vars(args)
         # TensorBoard cannot log Enums, need the raw value
         experiment_config["lr_scheduler_type"] = experiment_config["lr_scheduler_type"].value
-        accelerator.init_trackers("mlm_no_trainer", experiment_config)
+        accelerator.init_trackers("bart_text_infilling", experiment_config, init_kwargs={
+        "wandb": {
+            "name": f"train_{args.max_train_data}_val_{args.max_eval_data}",
+            "notes": "implemente text infilling on bart based on huggingface mlm_no_trainer",
+            "tags": ["code training", "bart", "text infilling"],
+            "entity": "liwenbo2099",
+        }
+    }
+)
 
     # Train!
     total_batch_size = args.per_device_train_batch_size * accelerator.num_processes * args.gradient_accumulation_steps
@@ -701,11 +717,12 @@ def main():
             )
             return torch.Tensor(text), torch.Tensor(attn_mask)
 
+    full_losses = []
 
+    if args.with_tracking:
+        total_loss = 0
     for epoch in range(starting_epoch, args.num_train_epochs):
         model.train()
-        if args.with_tracking:
-            total_loss = 0
         for step, batch in enumerate(train_dataloader):
             # We need to skip steps until we reach the resumed step
             if args.resume_from_checkpoint and epoch == starting_epoch:
@@ -722,7 +739,7 @@ def main():
                     text, attn_mask = text_infilling(text, attn_mask, random.randint(0, len(text) - 1))
                 outputs = model(**batch)
                 loss = outputs.loss
-                # We keep track of the loss at each epoch
+                # We keep track of the loss at each update
                 if args.with_tracking:
                     total_loss += loss.detach().float()
                 accelerator.backward(loss)
@@ -732,6 +749,7 @@ def main():
 
             # Checks if the accelerator has performed an optimization step behind the scenes
             if accelerator.sync_gradients:
+                progress_bar.set_postfix_str(f"loss: {loss.detach().float(): .5f}")
                 progress_bar.update(1)
                 completed_steps += 1
 
@@ -744,39 +762,34 @@ def main():
 
             if completed_steps >= args.max_train_steps:
                 break
-
-        model.eval()
-        losses = []
-
-        # ==================Evaluation====================
-
-        for step, batch in enumerate(eval_dataloader):
-            with torch.no_grad():                
-                outputs = model(**batch)
-
-            loss = outputs.loss
-            losses.append(accelerator.gather_for_metrics(loss.repeat(args.per_device_eval_batch_size)))
-
-        losses = torch.cat(losses)
-        try:
-            eval_loss = torch.mean(losses)
-            perplexity = math.exp(eval_loss)
-        except OverflowError:
-            perplexity = float("inf")
-
-        logger.info(f"epoch {epoch}: perplexity: {perplexity}")
-
-        if args.with_tracking:
-            accelerator.log(
-                {
-                    "perplexity": perplexity,
-                    "eval_loss": eval_loss,
-                    "train_loss": total_loss.item() / len(train_dataloader),
-                    "epoch": epoch,
-                    "step": completed_steps,
-                },
-                step=completed_steps,
-            )
+            # ==================Evaluation====================
+            if completed_steps > 0 and args.log_interval > 0 and completed_steps % args.log_interval == 0:
+                model.eval()
+                losses = []    
+                for step, batch in enumerate(eval_dataloader):
+                    with torch.no_grad():                
+                        outputs = model(**batch)
+                    loss = outputs.loss
+                    losses.append(accelerator.gather_for_metrics(loss.repeat(args.per_device_eval_batch_size)))
+                full_losses.extend(losses[0].cpu())
+                losses = torch.cat(losses)
+                try:
+                    eval_loss = torch.mean(losses)
+                    perplexity = math.exp(eval_loss)
+                except OverflowError:
+                    perplexity = float("inf")
+                logger.info(f"epoch {epoch}: perplexity: {perplexity}")
+                if args.with_tracking:
+                    accelerator.log(
+                        {
+                            "perplexity": perplexity,
+                            "eval_loss": eval_loss,
+                            "train_loss": total_loss.item() /  args.log_interval,  # len(train_dataloader),
+                            "epoch": epoch,
+                            "step": completed_steps,
+                        },
+                        step=completed_steps,
+                    )
 
         if args.push_to_hub and epoch < args.num_train_epochs - 1:
             accelerator.wait_for_everyone()
@@ -812,7 +825,13 @@ def main():
 
             with open(os.path.join(args.output_dir, "all_results.json"), "w") as f:
                 json.dump({"perplexity": perplexity}, f)
-
+    
+    return full_losses
 
 if __name__ == "__main__":
-    main()
+    full_losses = main()
+    # draw
+    # import matplotlib.pyplot as plt
+    # plt.plot(full_losses)
+    # plt.show()
+    # plt.savefig('loss.png')

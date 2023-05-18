@@ -3,6 +3,9 @@
 
 **/__pycache__
 
+# tracker
+wandb
+
 #data
 
 # checkpoints
